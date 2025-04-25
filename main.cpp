@@ -4,9 +4,38 @@
 #include <termios.h>
 #include <unistd.h>
 #include <cstdlib>
+#include <regex>
 
 using namespace std;
 termios initial_termios;
+
+void drawText(vector<string> text, int cursorRow, int cursorCol) {
+    cout << "\033[" << cursorRow << ";1H";
+    cout << "\033[2K";
+
+    regex keywords("\\b(int|char)\\b");
+    string highlight_start = "\033[1;34m";
+    string highlight_end = "\033[0m"; 
+
+    if (cursorRow >= 1 && cursorRow <= text.size()) {
+        string highlighted_line = regex_replace(text[cursorRow-1], keywords, highlight_start + "$1" + highlight_end);
+        cout << highlighted_line;
+    }
+
+    cout << "\033[" << cursorRow << ";" << cursorCol << "H";
+
+    // cout << "\033[2J\033[1;1H"; 
+       
+
+    // for (int i = 0; i < text.size(); i++) {
+    //     string highlighted_line = regex_replace(text[i], keywords, highlight_start + "$1" + highlight_end);
+    //     cout << highlighted_line;
+    //     if (i != text.size()-1) {
+    //         cout << endl;
+    //     }
+    // }
+    
+}
 
 void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &initial_termios) == -1) {
@@ -42,10 +71,14 @@ int main() {
         cursorCol = text[cursorRow-1].size()+1;
     }
 
-    // Clear screen and set cursor to top-left
     cout << "\033[2J\033[1;1H";
+    regex keywords("\\b(int|char)\\b");
+    string highlight_start = "\033[1;34m";
+    string highlight_end = "\033[0m";   
     for (int i = 0; i < text.size(); i++) {
-        cout << text[i] << endl;
+        string highlighted_line = regex_replace(text[i], keywords, highlight_start + "$1" + highlight_end);
+        cout << highlighted_line << endl;
+
     }
     cout << "\033[" << cursorRow << ";" << cursorCol << "H";
     cout.flush();
@@ -65,7 +98,10 @@ int main() {
                         cursorRow = std::max(1, cursorRow - 1);
                     } else if (next2 == 'B') {
                         // We'd need to handle scrolling or boundaries in a real editor
-                        cursorRow++;
+                        if (cursorRow < text.size()) {
+                            cursorRow++;
+                        }    
+                                            
                     } else if (next2 == 'C') {
                         if (cursorCol == text[cursorRow-1].size()+1) {
                             if (cursorRow < text.size()) {
@@ -108,6 +144,28 @@ int main() {
                 text.insert(text.begin()+cursorRow, s2);
                 cursorRow++;
                 cursorCol = 1;
+                drawText(text, cursorRow-1, cursorCol);
+                cout.flush();
+                drawText(text, cursorRow, cursorCol);
+                cout.flush();
+                continue;
+            }
+        } else if (input == 127 || input == 8) {
+            if (cursorCol > 1) {
+                text[cursorRow - 1].erase(cursorCol - 2, 1);
+                cursorCol--;
+            } else {
+                if (cursorRow > 1) {
+                    cursorCol = text[cursorRow-2].size()+1;
+                    text[cursorRow-2] += text[cursorRow-1];
+                    text.erase(text.begin()+cursorRow-1);
+                    cursorRow--;
+                    drawText(text, cursorRow, cursorCol);
+                    cout.flush();
+                    drawText(text, cursorRow+1, cursorCol);
+                    cout.flush();
+                    continue;
+                }
             }
         } else {
             string s = "";
@@ -122,11 +180,14 @@ int main() {
             cursorCol++;
         }
 
-        cout << "\033[2J\033[1;1H";
-        for (int i = 0; i < text.size(); i++) {
-            cout << text[i] << endl;
-        }
-        cout << "\033[" << cursorRow << ";" << cursorCol << "H";
+        // cout << "\033[2J\033[1;1H";
+        // for (int i = 0; i < text.size(); i++) {
+        //     cout << text[i] << endl;
+        // }
+
+        drawText(text, cursorRow, cursorCol);
+        
+
         cout.flush();
     }
 
