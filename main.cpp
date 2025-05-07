@@ -8,25 +8,89 @@
 #include <map>
 #include <cctype>
 #include <set>
+#include <fstream>
+#include <csignal>
 
 using namespace std;
 termios initial_termios;
 
 int WORD_SUGGESTED = 0;
 string WORD_SUGGESTION = "";
+int SHOULD_EXIT = 0;
 
 map<string, string> keywordColors = {
     {"int", "\033[1;34m"},
     {"char", "\033[1;34m"},
     {"double", "\033[1;34m"},
     {"#include", "\033[1;32m"},
-    {"namespace", "\033[1;32m"},
+    {"namespace", "\033[1;34m"},
     {"return", "\033[1;33m"},
     {"if", "\033[1;35m"},
     {"else", "\033[1;35m"},
     {"else if", "\033[1;35m"},
     {"while", "\033[1;35m"},
-    {"for", "\033[1;35m"}
+    {"for", "\033[1;35m"},
+    {"=", "\033[1;36m"}
+    
+};
+
+struct TrieNode {
+    map<char, TrieNode*> children;
+    bool isEndOfWord;
+    TrieNode() : isEndOfWord(false) {}
+    ~TrieNode() {
+        for (auto& pair : children) {
+            delete pair.second;
+        }
+    }
+};
+
+class Trie {
+public:
+    Trie() : root(new TrieNode()) {}
+    ~Trie() {
+        delete root;
+    }
+
+    void insert(const string& word) {
+        TrieNode* node = root;
+        for (char c : word) {
+            if (node->children.find(c) == node->children.end()) {
+                node->children[c] = new TrieNode();
+            }
+            node = node->children[c];
+        }
+        node->isEndOfWord = true;
+    }
+
+    string getSuggestion(const string& prefix) {
+        TrieNode* node = root;
+        for (char c : prefix) {
+            if (node->children.find(c) == node->children.end()) {
+                return ""; // No match
+            }
+            node = node->children[c];
+        }
+        return getSuggestionFromNode(node, prefix);
+    }
+
+private:
+    TrieNode* root;
+
+    string getSuggestionFromNode(TrieNode* node, const string& currentPrefix) {
+        if (node->isEndOfWord) {
+            return currentPrefix;
+        }
+        if (node->children.empty())
+        {
+            return "";
+        }
+
+        auto it = node->children.begin();
+        char nextChar = it->first;
+        TrieNode* nextNode = it->second;
+        return getSuggestionFromNode(nextNode, currentPrefix + nextChar);
+    }
 };
 
 vector<int> computeLPSArray(const string& pattern) {
@@ -175,9 +239,8 @@ void drawText(vector<string> text, int cursorRow, int cursorCol, set<string>& su
                 writtenSize++;
                 currentWord += text[cursorRow-1][i];
             }
-
-            for(set<string>::iterator it = suggestions.begin(); it != suggestions.end(); it++) {
-                
+            
+            for(set<string>::iterator it = suggestions.begin(); it != suggestions.end(); it++) {                
                 if (kmpSearch(*it, currentWord) == 0 && currentWord != *it) {
                     for(int i = writtenSize; i < (*it).size(); i++) {
                         WORD_SUGGESTION += (*it)[i];
@@ -223,19 +286,6 @@ void enableRawMode() {
     }
 }
 
-// int main() {
-//     enableRawMode();
-
-//     string t = "int main";
-//     string p = "int";
-//     string k = "\033[1;34m";
-//     replaceFirstOccurrenceInPlace(t, p, k + p + "\033[0m");
-//     cout << t << endl;
-
-//     disableRawMode();
-//     return 0;
-// }
-
 int calcIndentLevel(int prevIndentLevel, string currentLine) {
     int newIndentLevel = prevIndentLevel;
     int indentReduced = 0;
@@ -247,17 +297,6 @@ int calcIndentLevel(int prevIndentLevel, string currentLine) {
             break;
         }
 
-        // if (currentLine[i] == '}' && !indentReduced) {
-        //     newIndentLevel -= 1;
-        //     indentReduced = 1;
-        // } else if (currentLine[i] == '{' && !indentIncreased) {
-        //     newIndentLevel += 1;
-        //     indentIncreased = 1;
-        // }
-
-        // if (indentIncreased && indentReduced) {
-        //     break;
-        // }
     }
     newIndentLevel = (i+1) / 4;
     return newIndentLevel;
@@ -265,25 +304,53 @@ int calcIndentLevel(int prevIndentLevel, string currentLine) {
 
 
 void findVariableNames(const string& text, set<string>& variableNames) {
-    regex variablePattern(R"(\b(?:int|float|double|char|long|short|bool)?\s*(\w+)\s*=\s*[^;]+;)");
+    regex variablePattern(R"((?:int|float|double|char|long|short|bool)?\s*(\w+)\s*=\s*[^;]+;)");
 
     sregex_iterator begin(text.begin(), text.end(), variablePattern);
     sregex_iterator end;
 
     for (sregex_iterator it = begin; it != end; ++it) {
         smatch match = *it;
-        variableNames.insert(match[1]); 
+
+        
+        if (match[1].length() > 3) {
+            variableNames.insert(match[1]); 
+        }
+    }
+}
+
+void saveVectorToFile(const vector<string>& data) {
+    ofstream outputFile("test.cpp");
+
+    if (outputFile.is_open()) {
+        for (const string& line : data) {
+            outputFile << line << endl;
+        }
+        outputFile.close();
+        cout << "Data successfully written to " << "test.cpp" << endl;
+    } else {
+        cerr << "Error: Unable to open file " << "test.cpp" << " for writing." << endl;
     }
 }
 
 
+void handle_sigint(int) {
+    cout << "\033[2J\033[1;1H";
+    cout << "Saving buffer...\n";
+    SHOULD_EXIT = 1;
+}
+
+
 int main() {
+    signal(SIGINT, handle_sigint);
+
     enableRawMode();
     vector<string> text = {""};
     set<string> variableNames = {};
     int cursorRow = 1;
     int cursorCol = 1;
     int indentLevel = 0;
+    string saveResponse = "";
     if (text.size()) {
         cursorCol = text[cursorRow-1].size()+1;
     }
@@ -300,15 +367,20 @@ int main() {
     cout << "\033[" << cursorRow << ";" << cursorCol << "H";
     cout.flush();
 
-    while (true) {
+    while (!SHOULD_EXIT) {
         char input;
         if (read(STDIN_FILENO, &input, 1) == -1) {
             perror("read");
             break;
         }
 
+        if (SHOULD_EXIT) {
+            break;
+        }
+
         if (input == '\033') {
             char next1, next2;
+            
             if (read(STDIN_FILENO, &next1, 1) == 1 && read(STDIN_FILENO, &next2, 1) == 1) {
                 if (next1 == '[') {
                     if (next2 == 'A') {
@@ -346,7 +418,7 @@ int main() {
                 }
 
                 indentLevel = calcIndentLevel(indentLevel, text[cursorRow-1]);
-            }
+            } 
         } else if (input == '\n') {      
             if (cursorCol == text[cursorRow-1].size()+1) {
 
@@ -466,9 +538,10 @@ int main() {
 
                 cursorCol += numShifts;
             }
-        } else if (input == '=') {
+        } else if (input == ';') {
             string s = "";
             s += input;
+           
 
             if (cursorCol > text[cursorRow-1].size()) {
                 text[cursorRow-1] += s;
@@ -477,14 +550,6 @@ int main() {
             }
 
             findVariableNames(text[cursorRow-1], variableNames);
-
-            cout << "LOL" << endl;
-
-            for(set<string>::iterator it = variableNames.begin(); it != variableNames.end(); it++) {
-                cout <<   *it << endl;
-            }
-
-            
 
             cursorCol++;
         } else if (input == '{') {
@@ -566,5 +631,6 @@ int main() {
     }
 
     disableRawMode();
+    saveVectorToFile(text);
     return 0;
 }
